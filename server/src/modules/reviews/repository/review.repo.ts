@@ -6,6 +6,9 @@ import type { FindingRow, PullRow } from '../../../db/rows.js';
 
 export type ReviewRow = typeof t.reviews.$inferSelect;
 
+/** Per-run cost/usage joined onto a review (reviews.run_id → agent_runs.id). */
+export type RunStatRow = { id: string; costUsd: number | null; tokensIn: number | null; tokensOut: number | null };
+
 // ---- reviews + findings ---------------------------------------------------
 
 export async function insertReview(
@@ -58,7 +61,7 @@ export async function insertFindings(
 export async function reviewsForPull(
   db: Db,
   prId: string,
-): Promise<{ review: ReviewRow; findings: FindingRow[] }[]> {
+): Promise<{ review: ReviewRow; findings: FindingRow[]; run: RunStatRow | null }[]> {
   const reviews = await db
     .select()
     .from(t.reviews)
@@ -67,9 +70,25 @@ export async function reviewsForPull(
   if (reviews.length === 0) return [];
   const ids = reviews.map((r) => r.id);
   const findings = await db.select().from(t.findings).where(inArray(t.findings.reviewId, ids));
+  // Per-run cost/tokens for the verdict-banner badge (reviews.run_id → agent_runs.id;
+  // no FK, so join by id explicitly).
+  const runIds = reviews.map((r) => r.runId).filter((x): x is string => x != null);
+  const runRows = runIds.length
+    ? await db
+        .select({
+          id: t.agentRuns.id,
+          costUsd: t.agentRuns.costUsd,
+          tokensIn: t.agentRuns.tokensIn,
+          tokensOut: t.agentRuns.tokensOut,
+        })
+        .from(t.agentRuns)
+        .where(inArray(t.agentRuns.id, runIds))
+    : [];
+  const runById = new Map(runRows.map((r) => [r.id, r]));
   return reviews.map((review) => ({
     review,
     findings: findings.filter((f) => f.reviewId === review.id),
+    run: review.runId ? runById.get(review.runId) ?? null : null,
   }));
 }
 

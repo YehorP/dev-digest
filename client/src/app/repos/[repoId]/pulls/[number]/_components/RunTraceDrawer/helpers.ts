@@ -26,3 +26,9 @@ export function formatSeconds(ms: number): string {
 export function formatTokens(tokensIn: number, tokensOut: number): string {
   return `${(tokensIn / 1000).toFixed(0)}k→${(tokensOut / 1000).toFixed(1)}k`;
 }
+
+/** Adaptive USD cost; "—" when unknown (never "$0.00" for missing data). */
+export function formatCost(cost: number | null | undefined): string {
+  if (cost == null) return "—";
+  return cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(3)}`;
+}
