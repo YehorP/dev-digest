@@ -32,6 +32,10 @@ export const ReviewRecord = z.object({
   score: z.number().int().nullable(),
   model: z.string().nullable(),
   grounding: z.string().nullish(),
+  // Per-run cost/usage, joined from the backing agent_runs row (reviews.run_id).
+  cost_usd: z.number().nullable(),
+  tokens_in: z.number().int().nullable(),
+  tokens_out: z.number().int().nullable(),
   created_at: z.string(),
   findings: z.array(FindingRecord),
 });
