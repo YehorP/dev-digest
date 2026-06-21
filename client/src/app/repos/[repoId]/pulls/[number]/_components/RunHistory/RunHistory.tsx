@@ -3,9 +3,10 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge, Icon, CircularScore, type IconName } from "@devdigest/ui";
-import type { RunSummary, PrCommit } from "@devdigest/shared";
+import type { RunSummary, PrCommit, FindingRecord } from "@devdigest/shared";
 import { RunCostBadge } from "@/components/RunCostBadge";
 import { FindingsCounters } from "@/components/FindingsCounters";
+import { FindingsTooltip } from "@/components/FindingsTooltip";
 
 /**
  * PR timeline — every agent run interleaved with the PR's commits, newest-first
@@ -89,12 +90,15 @@ function tsOf(s: string | null | undefined): number {
 export function RunHistory({
   runs,
   commits = [],
+  findingsByRun,
   onOpenTrace,
   onGoToReview,
   onDelete,
 }: {
   runs: RunSummary[];
   commits?: PrCommit[];
+  /** Findings per run_id — powers the hover tooltip on the counts badge. */
+  findingsByRun?: Record<string, FindingRecord[]>;
   /** Open the trace + log drawer for a run (the logs icon). */
   onOpenTrace: (runId: string) => void;
   /** Jump to this run's inline review accordion below (clicking the agent name). */
@@ -157,13 +161,22 @@ export function RunHistory({
               {t(`runStatus.${o.key}`)}
             </Badge>
             {settled && r.score != null && <CircularScore score={r.score} size={30} stroke={3} />}
-            {settled && (
-              <FindingsCounters
-                critical={r.critical_count}
-                warning={r.warning_count}
-                suggestion={r.suggestion_count}
-              />
-            )}
+            {settled &&
+              (() => {
+                const runFindings = findingsByRun?.[r.run_id] ?? [];
+                const counters = (
+                  <FindingsCounters
+                    critical={r.critical_count}
+                    warning={r.warning_count}
+                    suggestion={r.suggestion_count}
+                  />
+                );
+                return runFindings.length > 0 ? (
+                  <FindingsTooltip findings={runFindings}>{counters}</FindingsTooltip>
+                ) : (
+                  counters
+                );
+              })()}
             <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
                 <button

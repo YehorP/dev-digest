@@ -8,6 +8,8 @@ import { Icon, Avatar, Badge, CircularScore } from "@devdigest/ui";
 import type { PrMeta } from "@/lib/types";
 import { RunCostBadge } from "@/components/RunCostBadge";
 import { FindingsCounters } from "@/components/FindingsCounters";
+import { FindingsTooltip } from "@/components/FindingsTooltip";
+import { usePrFindings } from "@/lib/hooks/reviews";
 import { SIZE_COLOR, STATUS_META } from "../../constants";
 import { relativeTime, sizeOf } from "../../helpers";
 import { s } from "../../styles";
@@ -19,6 +21,11 @@ export function PRRow({ pr, repoId }: { pr: PrMeta; repoId: string }) {
   const st = STATUS_META[pr.status] ?? STATUS_META.needs_review!;
   const { size, lines } = sizeOf(pr);
   const reviewed = pr.score != null; // null score ⇒ PR has never been reviewed
+  const findingsTotal =
+    (pr.critical_count ?? 0) + (pr.warning_count ?? 0) + (pr.suggestion_count ?? 0);
+  // Findings are not in the list payload (counts only) — fetch them lazily, but
+  // only while the row is hovered, so the tooltip has data to show on demand.
+  const { findings, isLoading: findingsLoading } = usePrFindings(pr.id, h && findingsTotal > 0);
   return (
     <div
       onMouseEnter={() => setH(true)}
@@ -55,12 +62,22 @@ export function PRRow({ pr, repoId }: { pr: PrMeta; repoId: string }) {
           <span style={s.muted}>—</span>
         )}
       </div>
-      <div>
-        <FindingsCounters
-          critical={pr.critical_count}
-          warning={pr.warning_count}
-          suggestion={pr.suggestion_count}
-        />
+      <div onClick={(e) => e.stopPropagation()}>
+        {findingsTotal > 0 ? (
+          <FindingsTooltip findings={findings} count={findingsTotal} loading={findingsLoading}>
+            <FindingsCounters
+              critical={pr.critical_count}
+              warning={pr.warning_count}
+              suggestion={pr.suggestion_count}
+            />
+          </FindingsTooltip>
+        ) : (
+          <FindingsCounters
+            critical={pr.critical_count}
+            warning={pr.warning_count}
+            suggestion={pr.suggestion_count}
+          />
+        )}
       </div>
       <div>
         <Badge dot color={st.c} bg="transparent">
