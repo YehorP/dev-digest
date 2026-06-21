@@ -40,3 +40,7 @@ Because `shared` is vendored and each package has its own `node_modules`, two se
 **Workarounds in place:**
 1. `app.ts` error handler does shape-based ZodError detection as fallback (`maybeZod.name === 'ZodError' && Array.isArray(maybeZod.issues)`).
 2. `reviewer-core/tsconfig.json` pins `zod` to its own `node_modules` explicitly, ensuring it never accidentally resolves to the server's copy.
+
+## node/pnpm are not on the default tool PATH (Windows dev box) — 2026-06-21 · [Context]
+**Why:** the Bash and PowerShell tools start without node/pnpm/corepack on PATH (`pnpm: command not found`). They live at `C:\Program Files\nodejs\node.exe` and `%APPDATA%\npm\pnpm`. Also: `reviewer-core` has no local `typescript`, and its `pnpm typecheck` runs `pnpm install` first, which can `EPERM` on a locked `node_modules/openai` while the dev server is running.
+**How to apply:** prefix PowerShell commands with `$env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;$env:Path";` before any `pnpm`/`node`. To typecheck reviewer-core changes, run `pnpm -s typecheck` from `server/` (it compiles reviewer-core through the path alias) — don't run tsc in `reviewer-core/` directly. Server typecheck currently has 2 pre-existing unrelated errors in `db/migrate.ts` and `db/seed.ts` (`string | undefined`); ignore those, they're not yours.

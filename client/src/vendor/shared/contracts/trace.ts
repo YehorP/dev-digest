@@ -104,6 +104,10 @@ export const RunSummary = z.object({
   tokens_out: z.number().int().nullable(),
   cost_usd: z.number().nullable(),
   findings_count: z.number().int().nullable(),
+  // Per-severity kept-finding counts, denormalized onto the run row.
+  critical_count: z.number().int().nullable(),
+  warning_count: z.number().int().nullable(),
+  suggestion_count: z.number().int().nullable(),
   grounding: z.string().nullable(),
   ran_at: z.string().nullable(),
   // Review outcome, denormalized onto the run row at completion (the timeline

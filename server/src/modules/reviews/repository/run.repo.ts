@@ -61,6 +61,9 @@ export async function listRunsForPull(
     tokens_out: run.tokensOut,
     cost_usd: run.costUsd,
     findings_count: run.findingsCount,
+    critical_count: run.criticalCount,
+    warning_count: run.warningCount,
+    suggestion_count: run.suggestionCount,
     grounding: run.grounding,
     ran_at: run.ranAt ? run.ranAt.toISOString() : null,
     score: run.score,
@@ -149,6 +152,10 @@ export async function completeAgentRun(
     tokensOut: number;
     costUsd: number | null;
     findingsCount: number;
+    /** Per-severity kept-finding counts; null on failed/cancelled runs. */
+    criticalCount?: number | null;
+    warningCount?: number | null;
+    suggestionCount?: number | null;
     grounding: string;
     /** Review score (0-100); null on failed/cancelled runs. */
     score?: number | null;
@@ -167,6 +174,9 @@ export async function completeAgentRun(
       tokensOut: values.tokensOut,
       costUsd: values.costUsd,
       findingsCount: values.findingsCount,
+      criticalCount: values.criticalCount ?? null,
+      warningCount: values.warningCount ?? null,
+      suggestionCount: values.suggestionCount ?? null,
       grounding: values.grounding,
       score: values.score ?? null,
       blockers: values.blockers ?? null,

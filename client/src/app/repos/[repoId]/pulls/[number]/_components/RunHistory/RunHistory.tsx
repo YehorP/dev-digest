@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Badge, Icon, CircularScore, type IconName } from "@devdigest/ui";
 import type { RunSummary, PrCommit } from "@devdigest/shared";
 import { RunCostBadge } from "@/components/RunCostBadge";
+import { FindingsCounters } from "@/components/FindingsCounters";
 
 /**
  * PR timeline — every agent run interleaved with the PR's commits, newest-first
@@ -156,6 +157,13 @@ export function RunHistory({
               {t(`runStatus.${o.key}`)}
             </Badge>
             {settled && r.score != null && <CircularScore score={r.score} size={30} stroke={3} />}
+            {settled && (
+              <FindingsCounters
+                critical={r.critical_count}
+                warning={r.warning_count}
+                suggestion={r.suggestion_count}
+              />
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
                 <button
