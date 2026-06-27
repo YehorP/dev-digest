@@ -111,14 +111,16 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       }
     }
 
-    // Latest-review SCORE per PR for the list's score ring. Computed on read
+    // Latest-review SCORE per PR for the list's score ring, plus the latest
+    // review-batch COST and per-severity FINDINGS breakdown. Computed on read
     // from reviews (no FK denorm); the list is small, so one IN-query + JS
-    // grouping is cheap. (The per-severity FINDINGS breakdown is intentionally
-    // not surfaced on the list — findings live on the PR detail page.)
+    // grouping is cheap.
     const prIds = rows.map((r) => r.id);
     const latestReviewByPr = new Map<string, { score: number | null }>();
-    // Latest review-batch cost per PR = sum over each agent's latest review run.
+    // Latest review-batch per PR = sum over each agent's latest review run.
     const costByPr = new Map<string, number | null>();
+    type Sev = { critical: number; warning: number; suggestion: number };
+    const findingsByPr = new Map<string, Sev | null>();
     if (prIds.length > 0) {
       const reviewRows = await container.db
         .select({
@@ -126,13 +128,16 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
           agentId: t.reviews.agentId,
           score: t.reviews.score,
           cost: t.agentRuns.costUsd,
+          critical: t.agentRuns.criticalCount,
+          warning: t.agentRuns.warningCount,
+          suggestion: t.agentRuns.suggestionCount,
         })
         .from(t.reviews)
         .leftJoin(t.agentRuns, eq(t.agentRuns.id, t.reviews.runId))
         .where(and(inArray(t.reviews.prId, prIds), eq(t.reviews.kind, 'review')))
         .orderBy(desc(t.reviews.createdAt));
       // Rows newest-first. First seen per PR = latest review (score ring).
-      // First seen per (PR, agent) = that agent's latest run → sum = batch cost.
+      // First seen per (PR, agent) = that agent's latest run → sum = the batch.
       const seenAgent = new Set<string>();
       for (const rv of reviewRows) {
         if (!latestReviewByPr.has(rv.prId)) latestReviewByPr.set(rv.prId, { score: rv.score });
@@ -143,6 +148,16 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
             costByPr.set(rv.prId, (costByPr.get(rv.prId) ?? 0) + rv.cost);
           } else if (!costByPr.has(rv.prId)) {
             costByPr.set(rv.prId, null); // priced-unknown stays null → renders "—"
+          }
+          // A settled run has the counts set (0+); failed/missing runs are null.
+          if (rv.critical != null || rv.warning != null || rv.suggestion != null) {
+            const acc = findingsByPr.get(rv.prId) ?? { critical: 0, warning: 0, suggestion: 0 };
+            acc.critical += rv.critical ?? 0;
+            acc.warning += rv.warning ?? 0;
+            acc.suggestion += rv.suggestion ?? 0;
+            findingsByPr.set(rv.prId, acc);
+          } else if (!findingsByPr.has(rv.prId)) {
+            findingsByPr.set(rv.prId, null); // never reviewed → renders "—"
           }
         }
       }
@@ -173,6 +188,9 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
         updated_at: r.updatedAt?.toISOString() ?? null,
         score: review ? review.score : null,
         cost_usd: costByPr.get(r.id) ?? null,
+        critical_count: findingsByPr.get(r.id)?.critical ?? null,
+        warning_count: findingsByPr.get(r.id)?.warning ?? null,
+        suggestion_count: findingsByPr.get(r.id)?.suggestion ?? null,
       };
     });
   });

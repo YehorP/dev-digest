@@ -160,6 +160,10 @@ export class ReviewRepository {
       tokensOut: number;
       costUsd: number | null;
       findingsCount: number;
+      /** Per-severity kept-finding counts; null on failed/cancelled runs. */
+      criticalCount?: number | null;
+      warningCount?: number | null;
+      suggestionCount?: number | null;
       grounding: string;
       /** Review score (0-100); null on failed/cancelled runs. */
       score?: number | null;

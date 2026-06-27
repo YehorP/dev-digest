@@ -82,6 +82,9 @@ export class ReviewRunExecutor {
             tokensOut: 0,
             costUsd: null,
             findingsCount: 0,
+            criticalCount: null,
+            warningCount: null,
+            suggestionCount: null,
             grounding: '0/0 passed',
             error: msg,
           })
@@ -240,6 +243,11 @@ export class ReviewRunExecutor {
       // the timeline colors on, NOT the model's self-reported verdict.
       const blockers = countBlockers(keptFindings, agent.ciFailOn);
 
+      // Per-severity breakdown for the Findings counters (PR list + timeline).
+      const criticalCount = keptFindings.filter((f) => f.severity === 'CRITICAL').length;
+      const warningCount = keptFindings.filter((f) => f.severity === 'WARNING').length;
+      const suggestionCount = keptFindings.filter((f) => f.severity === 'SUGGESTION').length;
+
       // ---- Observability: agent_runs + ONE run_traces document --------------
       await this.repo.completeAgentRun(runId, {
         status: 'done',
@@ -248,6 +256,9 @@ export class ReviewRunExecutor {
         tokensOut,
         costUsd,
         findingsCount: findingRows.length,
+        criticalCount,
+        warningCount,
+        suggestionCount,
         grounding,
         score: outcome.review.score,
         blockers,
@@ -305,6 +316,9 @@ export class ReviewRunExecutor {
           tokensOut: 0,
           costUsd: null,
           findingsCount: 0,
+          criticalCount: null,
+          warningCount: null,
+          suggestionCount: null,
           grounding: '0/0 passed',
           error: msg,
         })

@@ -56,3 +56,11 @@ Every facade method returns a valid but `degraded: true` result instead of throw
 
 ### `REPO_INTEL_ENABLED` flag
 Global off-switch. When false, every facade method short-circuits to `[]` / degraded before doing any work. Per-agent override (`agents.repo_intel`) takes precedence and skips enrichment for that agent only, independently of the global flag.
+
+## `completeAgentRun`'s value-object type is declared in TWO places — 2026-06-21 · [Mistake]
+**Why:** the `values` shape is written out twice — inline in `modules/reviews/repository/run.repo.ts` (`completeAgentRun`) AND re-declared in the `ReviewRepository` wrapper in `modules/reviews/repository.ts`. Adding a field to one compiles locally but fails typecheck at the *call site* (`run-executor.ts`) with a misleading "Object literal may only specify known properties" pointing at the executor, not the repo.
+**How to apply:** when adding a persisted run field (hit this adding `cost_usd`, then the `critical/warning/suggestion_count` columns), update BOTH the inline type in `run.repo.ts` and the wrapper type in `repository.ts`, PLUS the `.set({})` in `run.repo.ts`, PLUS the `listRunsForPull` row mapping. Four edits, not one.
+
+## Per-PR list metrics are derived "latest run per agent", not denormalized — 2026-06-21 · [Pattern]
+**Why:** `score`, `cost_usd`, and the per-severity findings counts on `GET /repos/:id/pulls` are computed on read in `modules/pulls/routes.ts` (~line 122): one query over `reviews` left-joined to `agent_runs`, ordered `createdAt desc`, taking the first-seen row per `(prId, agentId)` = each agent's latest review run, then summed = the "latest review batch" (matches the PR-detail accordions). There is no per-PR denormalized column for these.
+**How to apply:** to add another per-PR list metric, extend that single query + the existing JS grouping loop — don't add a DB column or a second query. Emit `null` for never-reviewed PRs (client renders "—"); never coerce to 0.

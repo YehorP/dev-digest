@@ -1,7 +1,7 @@
-import OpenAI from 'openai';
 import type {
   LLMProvider,
   ModelInfo,
+  ChatMessage,
   CompletionRequest,
   CompletionResult,
   StructuredRequest,
@@ -16,10 +16,16 @@ import { toJsonSchema, parseWithRepair } from './structured.js';
  * session grouping, the no-choices guard, request timeouts, and the
  * parse-with-repair loop live in ONE place instead of being duplicated.
  *
- * OpenRouter is OpenAI-compatible, so we drive it with the OpenAI SDK pointed at
- * its baseURL. Only completeStructured is needed by reviewPullRequest; the rest
- * are stubs. Cost attribution is INJECTED (`estimateCost`) so the engine stays
- * free of a pricing table — the server passes its own, the runner passes none.
+ * OpenRouter is OpenAI-compatible, so we drive `/chat/completions` directly with
+ * `fetch`. We deliberately do NOT use the `openai` SDK here: its HTTP transport
+ * premature-closes mid-body on long OpenRouter generations (slow models taking
+ * minutes), failing with `ERR_STREAM_PREMATURE_CLOSE`. Raw `fetch` is the only
+ * transport proven resilient on those multi-minute responses, and SDK streaming
+ * does not fix it (both tested — see reviewer-core/INSIGHTS.md 2026-06-21).
+ *
+ * Only completeStructured is needed by reviewPullRequest; the rest are stubs.
+ * Cost attribution is INJECTED (`estimateCost`) so the engine stays free of a
+ * pricing table — the server passes its own, the runner passes none.
  */
 
 const NOT_SUPPORTED = 'OpenRouterProvider only implements completeStructured';
@@ -36,37 +42,95 @@ export interface OpenRouterProviderOptions {
   estimateCost?: (model: string, tokensIn: number, tokensOut: number) => number | null;
 }
 
+/** OpenAI-compatible /chat/completions response (only the fields we read). */
+interface ChatCompletionResponse {
+  choices?: Array<{ message?: { content?: string | null } }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    // `cost` is an OpenRouter extension (USD), absent from the OpenAI shape.
+    cost?: number;
+  } | null;
+  error?: { message?: string };
+}
+
 export class OpenRouterProvider implements LLMProvider {
   readonly id: 'openai' | 'openrouter';
-  private client: OpenAI;
   private baseURL: string;
   private apiKey: string;
+  private timeoutMs: number;
+  private maxTransportRetries: number;
   private estimateCost?: OpenRouterProviderOptions['estimateCost'];
 
   constructor(apiKey: string, opts: OpenRouterProviderOptions = {}) {
     this.id = opts.id ?? 'openrouter';
     this.apiKey = apiKey;
     this.baseURL = opts.baseURL ?? 'https://openrouter.ai/api/v1';
+    this.timeoutMs = opts.timeoutMs ?? 90_000;
+    this.maxTransportRetries = opts.maxRetries ?? 2;
     this.estimateCost = opts.estimateCost;
-    this.client = new OpenAI({
-      apiKey,
-      baseURL: this.baseURL,
-      timeout: opts.timeoutMs ?? 90_000,
-      maxRetries: opts.maxRetries ?? 2,
-    });
+  }
+
+  /**
+   * One raw POST to /chat/completions with an idle-free abort timeout and
+   * backoff retries on transport errors / 429 / 5xx (mirrors the retry policy
+   * the SDK used to give us). The full body is buffered before returning, so a
+   * resilient connection — not the SDK's fragile streaming reader — owns the
+   * long generation.
+   */
+  private async postChatCompletion(body: Record<string, unknown>): Promise<ChatCompletionResponse> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= this.maxTransportRetries; attempt++) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), this.timeoutMs);
+      try {
+        const res = await fetch(`${this.baseURL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        });
+        // Retry transient upstream failures (429 + 5xx); surface other 4xx now.
+        if (res.status === 429 || res.status >= 500) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`OpenRouter returned ${res.status}${text ? `: ${text}` : ''}`);
+        }
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          // Non-retryable: throw outside the retry loop.
+          throw Object.assign(new Error(`OpenRouter returned ${res.status}${text ? `: ${text}` : ''}`), {
+            fatal: true,
+          });
+        }
+        return (await res.json()) as ChatCompletionResponse;
+      } catch (err) {
+        if ((err as { fatal?: boolean }).fatal) throw err;
+        lastErr = err;
+        if (attempt < this.maxTransportRetries) {
+          // Exponential backoff: 0.5s, 1s, 2s…
+          await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
   async completeStructured<T>(req: StructuredRequest<T>): Promise<StructuredResult<T>> {
     const jsonSchema = toJsonSchema(req.schema, req.schemaName);
     const maxRetries = req.maxRetries ?? 2;
-    const messages = [...req.messages];
+    const messages: ChatMessage[] = [...req.messages];
     let tokensIn = 0;
     let tokensOut = 0;
     let costFromApi: number | null = null;
     let lastRaw = '';
 
     for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
-      const res = await this.client.chat.completions.create({
+      const res = await this.postChatCompletion({
         model: req.model,
         messages,
         temperature: req.temperature ?? 0,
@@ -75,8 +139,7 @@ export class OpenRouterProvider implements LLMProvider {
           type: 'json_schema',
           json_schema: { name: req.schemaName, schema: jsonSchema.schema, strict: true },
         },
-        // OpenRouter session grouping — extra body field (spread is exempt from
-        // excess-property checks). Only sent when talking to OpenRouter.
+        // OpenRouter session grouping — only sent when talking to OpenRouter.
         ...(this.id === 'openrouter' && req.sessionId ? { session_id: req.sessionId } : {}),
         // OpenRouter usage accounting — ask it to return the REAL generation
         // cost (USD) in `usage.cost`, instead of estimating from a price book.
@@ -87,14 +150,14 @@ export class OpenRouterProvider implements LLMProvider {
       // error / moderation / free-tier limit in the body) — surface it.
       const choice = res.choices?.[0];
       if (!choice) {
-        const errMsg = (res as unknown as { error?: { message?: string } }).error?.message;
+        const errMsg = res.error?.message;
         throw new Error(`OpenRouter returned no choices for ${req.schemaName}${errMsg ? `: ${errMsg}` : ''}`);
       }
       lastRaw = choice.message?.content ?? '';
       tokensIn += res.usage?.prompt_tokens ?? 0;
       tokensOut += res.usage?.completion_tokens ?? 0;
-      // `usage.cost` is an OpenRouter extension (USD), absent from the OpenAI SDK type.
-      const apiCost = (res.usage as { cost?: number } | null | undefined)?.cost;
+      // `usage.cost` is an OpenRouter extension (USD), absent from the OpenAI shape.
+      const apiCost = res.usage?.cost;
       if (typeof apiCost === 'number') costFromApi = (costFromApi ?? 0) + apiCost;
 
       const parsed = parseWithRepair(req.schema, lastRaw);

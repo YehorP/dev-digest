@@ -56,6 +56,25 @@ export function usePrReviews(prId: string | null | undefined) {
   });
 }
 
+/**
+ * Flattened findings for a PR, fetched LAZILY — only once `enabled` flips true
+ * (e.g. when a PR-list row's findings counter is hovered). Shares the `reviews`
+ * query cache with {@link usePrReviews} so the PR detail page reuses it for free.
+ */
+export function usePrFindings(prId: string | null | undefined, enabled: boolean) {
+  const q = useQuery({
+    queryKey: ["reviews", prId],
+    queryFn: () => api.get<ReviewRecord[]>(`/pulls/${prId}/reviews`),
+    enabled: !!prId && enabled,
+    staleTime: 30_000,
+  });
+  const findings = React.useMemo(
+    () => (q.data ?? []).flatMap((r) => r.findings),
+    [q.data],
+  );
+  return { findings, isLoading: q.isLoading };
+}
+
 /** Delete one run from the PR's run history (+ its trace). */
 export function useDeleteRun(prId: string | null | undefined) {
   const qc = useQueryClient();
